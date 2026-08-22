@@ -273,7 +273,34 @@ To ensure smooth 60 FPS UI rendering, sub-10ms motion processing, and reliable B
 
 ---
 
-## 7. Autonomous Implementation Roadmap for Coding Agents
+## 7. Emulation & Virtual Simulation Strategy
+
+To enable autonomous software engineering agents and human developers to build, test, and verify the ESP32 firmware without requiring physical hardware immediately on hand, three simulation layers are specified:
+
+### 7.1 Wokwi ESP32 Hardware Simulator (Firmware & IMU Emulation)
+* **Platform:** [Wokwi.com](https://wokwi.com/)
+* **Emulated Components:**
+  * ESP32-S3 / ESP32 Dual Core board model.
+  * ILI9341 / ST7789 TFT display + touch screen module (`diagram.json`).
+  * MPU6050 / MPU6886 I2C IMU sensor module.
+* **IMU Motion Simulation:**
+  * Wokwi provides interactive GUI sliders for Accel X/Y/Z and Gyro X/Y/Z to simulate tilting the headstock up/down (Pitch) and twisting (Roll) in real time.
+* **CLI Execution:** Supports `wokwi-cli` in continuous integration (CI) workflows to execute automated C++/Arduino/ESP-IDF tests.
+
+### 7.2 LVGL Desktop Simulator (Touchscreen HCI Prototyping)
+* **Platform:** LVGL Desktop Simulator (VS Code / SDL2 for Linux/macOS/Windows) or LVGL WebAssembly.
+* **Target Screen Resolution:** 320x240 pixels (matching M5Stack Core2).
+* **Usage:** Allows rapid UI development, widget layout verification, mouse-driven touch simulation, and Tap Tempo button responsiveness testing before flashing onto ESP32 hardware.
+
+### 7.3 Virtual Pocket Master BLE Peripheral Emulator (End-to-End Comms)
+To test BLE GATT client discovery and SysEx command validation without the physical pedal:
+* **Option A (Python BLE Emulator):** A lightweight Python script using `bleak` / `bleno` running on a PC/laptop that advertises as `Sonic Master BLE` with GATT Characteristic `7772e5db-3868-4112-a1a9-f2669d106bf3`.
+  * The emulator validates incoming packets: checks for `80 80 F0` header, verifies the CRC-8 SMBus PEC checksum, prints parameter changes to console, and sends ACK notifications back to the ESP32.
+* **Option B (Local PocketEdit Web App):** Running `index.html` from `PocketEdit` connected via Web Bluetooth or Virtual USB MIDI (using `loopMIDI` on Windows or `IAC Driver` on macOS) to visually confirm that transmitted commands correctly manipulate the virtual pedal controls.
+
+---
+
+## 8. Autonomous Implementation Roadmap for Coding Agents
 
 Coding agents implementing this system should follow this modular sequence:
 
@@ -296,12 +323,13 @@ Coding agents implementing this system should follow this modular sequence:
    ├── Implement GUI screens (Performance, Motion Mapper, Calibration)
    └── Wire UI controls to FreeRTOS queues & BLE protocol tasks
 
-[Stage 5: Integration & Verification]
-   ├── Perform end-to-end latency and stability verification
-   └── Validate battery consumption and auto-reconnect logic
+[Stage 5: Simulation & End-to-End Verification]
+   ├── Verify UI layout in LVGL Simulator / Wokwi
+   ├── Test BLE SysEx encoding against Virtual Pocket Master Peripheral
+   └── Validate battery management and auto-reconnect logic
 ```
 
 ---
 
-## 8. Summary
-This specification provides a complete, self-contained architecture for an off-the-shelf, headstock-mounted ESP32 motion controller for the Sonicake Pocket Master. All hardware specs, BLE SysEx protocol details, CRC checksum algorithms, IMU complementary filtering equations, and FreeRTOS task mappings are fully defined.
+## 9. Summary
+This specification provides a complete, self-contained architecture for an off-the-shelf, headstock-mounted ESP32 motion controller for the Sonicake Pocket Master. All hardware specs, BLE SysEx protocol details, CRC checksum algorithms, IMU complementary filtering equations, FreeRTOS task mappings, and Virtual Emulators (Wokwi, LVGL, Python BLE Loopback) are fully defined.
