@@ -6,7 +6,7 @@ This specification defines the spec-driven design for an out-of-the-box, no-sold
 
 The controller communicates wirelessly over **Bluetooth Low Energy (BLE)** (or optionally USB MIDI) with the **Sonicake Pocket Master** multi-effects pedal. Utilizing a 6-axis Inertial Measurement Unit (IMU - 3-axis accelerometer + 3-axis gyroscope), the performer can control effect parameters dynamically through physical instrument motion (e.g., tilting the neck up/down for Gain or Wah, pitching/rolling for Chorus speed or Delay feedback) and interact with a touch-driven graphical UI for preset management, parameter mapping, and Tap Tempo.
 
-This design is structured to serve as the blueprint for downstream software engineering agents to implement the Proof-of-Concept (POC) firmware autonomously, leveraging a **modular plugin architecture**, **intuitive swipe gesture UI navigation**, and **Jira-style task breakdown measured in Tokens**.
+This design is structured to serve as the blueprint for downstream software engineering agents to implement the Proof-of-Concept (POC) firmware autonomously, leveraging a **modular plugin architecture**, **intuitive swipe gesture UI navigation**, **GitFlow branching strategy**, **conditional GitHub Actions CI/CD artifact building**, and a **Jira-style task breakdown measured in Tokens**.
 
 ---
 
@@ -393,5 +393,135 @@ EPIC 5: SIMULATION & TESTING PLUGINS
 
 ---
 
-## 10. Summary & License Confirmation
-This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. The UI is streamlined for POC testing via simple **Left/Right swipe gestures** across **Tap Tempo Mode**, **Motion Gain Mode**, and the **Config Menu**, with all task estimations, context window limits, and agent execution metrics measured in **Tokens**.
+## 10. GitFlow Branching Strategy
+
+To manage parallel multi-agent development and prevent merge conflicts across feature branches, the project strictly follows **GitFlow**:
+
+```
+[main] --------------------------------------------* (v1.0.0 Release Tag)
+          \                                      /
+[develop]  *----*--------*----------*-----------* (Integration Branch)
+                 \      /          /
+[feature/xxx]     *----*          /  (Agent-Comms Feature Branch)
+                                 /
+[feature/yyy]                   *----*  (Agent-UI Feature Branch)
+```
+
+### 10.1 Branch Types & Rules
+* `main`: Production-ready, stable baseline branch. Directly protected. Only merges from `release/` or hotfix branches. Contains official version tags (e.g., `v1.0.0-poc`).
+* `develop`: Active integration branch for multi-agent development. All feature branches branch off `develop` and pull request (PR) back into `develop`.
+* `feature/<epic>-<card-id>`: Short-lived feature branches claimed by individual agents (e.g., `feature/core-101-freertos-skeleton`, `feature/ui-401-tap-tempo`).
+* `release/vX.Y.Z`: Release candidate preparation branch for final verification and tagging.
+
+---
+
+## 11. GitHub Actions CI/CD & Conditional Artifact Generation
+
+To prevent repository bloat and save storage bandwidth, compiled binary artifacts (ESP32 `.bin` firmware files, bootloaders, and flash maps) are **only built and uploaded under strict conditional triggers**.
+
+```
+                           [ GITHUB ACTIONS EVENT ]
+                                       │
+            ┌──────────────────────────┴──────────────────────────┐
+            ▼                                                     ▼
+   [ Pull Request / Push ]                               [ Version Tag Push ]
+     to `develop` branch                                  e.g., `v1.0.0-poc`
+            │                                                     │
+            ▼                                                     ▼
++-----------------------+                             +-----------------------+
+|  Job: Code Validation |                             |  Job: Release Build   |
+|  - C++ Linter & Format|                             |  - Build ESP32 Binaries|
+|  - Unit Tests (CRC8)  |                             |  - Generate Firmware   |
+|  - Wokwi CLI Tests    |                             |    Manifest           |
++-----------+-----------+                             +-----------+-----------+
+            │                                                     │
+            ▼                                                     ▼
+   (No Artifact Upload)                                +-----------------------+
+   (Save Storage Space)                                | Upload Build Artifacts|
+                                                       | to GitHub Release &   |
+                                                       | Artifact Storage      |
+                                                       +-----------------------+
+```
+
+### 11.1 Workflow Specification (`.github/workflows/ci.yml`)
+
+```yaml
+name: CI/CD Firmware Build & Conditional Release Artifacts
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "develop" ]
+
+jobs:
+  validate:
+    name: Code Quality & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python for Native CRC Unit Tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Native Protocol Unit Tests
+        run: |
+          python -m unittest discover -s tests
+
+  build:
+    name: PlatformIO ESP32 Firmware Build
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Cache PlatformIO Core & Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio.ini') }}
+
+      - name: Setup PlatformIO
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO CLI
+        run: pio system info || pip install platformio
+
+      - name: Compile ESP32 Firmware
+        run: pio run -e m5stack-core2
+
+      # CONDITIONAL ARTIFACT UPLOAD: Only on Git Release Tags (e.g. v1.0.0)
+      - name: Upload Firmware Binary Artifacts (Releases Only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-headstock-controller-${{ github.ref_name }}
+          path: |
+            .pio/build/m5stack-core2/firmware.bin
+            .pio/build/m5stack-core2/bootloader.bin
+            .pio/build/m5stack-core2/partitions.bin
+          retention-days: 90
+
+      - name: Create GitHub Release and Attach Binaries
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            .pio/build/m5stack-core2/firmware.bin
+            .pio/build/m5stack-core2/bootloader.bin
+            .pio/build/m5stack-core2/partitions.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+## 12. Summary & License Confirmation
+This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. The UI is streamlined for POC testing via simple **Left/Right swipe gestures** across **Tap Tempo Mode**, **Motion Gain Mode**, and the **Config Menu**. Collaborative development is managed through **GitFlow**, **conditional GitHub Actions artifact generation**, and **Jira task cards measured in Tokens**.
