@@ -6,7 +6,7 @@ This specification defines the spec-driven design for an out-of-the-box, no-sold
 
 The controller communicates wirelessly over **Bluetooth Low Energy (BLE)** (or optionally USB MIDI) with the **Sonicake Pocket Master** multi-effects pedal. Utilizing a 6-axis Inertial Measurement Unit (IMU - 3-axis accelerometer + 3-axis gyroscope), the performer can control effect parameters dynamically through physical instrument motion (e.g., tilting the neck up/down for Gain or Wah, pitching/rolling for Chorus speed or Delay feedback) and interact with a touch-driven graphical UI for preset management, parameter mapping, and Tap Tempo.
 
-This design is structured to serve as the blueprint for downstream software engineering agents to implement the firmware autonomously.
+This design is structured to serve as the blueprint for downstream software engineering agents to implement the firmware autonomously, leveraging a **modular plugin architecture** and **Jira-style task breakdown** for parallel multi-agent development.
 
 ---
 
@@ -99,177 +99,106 @@ The Pocket Master multi-effects signal chain consists of 10 modules:
 * `8`: Reverb (**RVB**)
 * `9`: Amp Profile (**Clone**)
 
-### 3.5 Essential Control Commands
+---
 
-#### A. Preset Switching
-* **User Presets (P01 - P50):** Index `0` to `49`
-* **Factory Presets (F01 - F50):** Index `50` to `99`
-* **SysEx Template:** `8080f0[CRC]00010000010301010403[SLOT_HEX_EXPANDED]000000000000f7`
+## 4. Plugin System Architecture
 
-#### B. Global Volume & Patch Volume
-* **Global Volume (0-100):** Modifies input/output master level.
-* **Patch Volume (0-100):**
-  * `0`: `8080f00F0E0001000000070101040200010200000100000000f7`
-  * `50`: `8080f006000001000000070101040200010200000100000302f7`
-  * `100`: `8080f00c050001000000070101040200010200000100000604f7`
+To allow multiple coding agents to work independently on different features without breaking the core system, the firmware is organized around a **Plugin Architecture**.
 
-#### C. Gain Control (AMP / DRV)
-* **DRV Gain (AlgID 0, range 0-100):** Maps to `parameters[2][0][val]`
-* **AMP Gain (AlgID 0, range 0-100):** Maps to `parameters[3][0][val]`
+```
+                           +------------------------+
+                           |  Plugin Manager Core   |
+                           +-----------+------------+
+                                       |
+          +----------------------------+----------------------------+
+          |                            |                            |
+          v                            v                            v
++------------------+         +-------------------+        +--------------------+
+|  Motion Plugins  |         |  UI Screen        |        |  Comms Backend     |
+|  (IMU Processors)|         |  Plugins (LVGL)   |        |  Plugins           |
++------------------+         +-------------------+        +--------------------+
+| - PitchGain      |         | - PerformView     |        | - BLE Central      |
+| - ModRollChorus  |         | - MotionMapEditor |        | - USB MIDI         |
+| - SpatialReverb  |         | - CalibrationUI   |        | - Virtual Simulator|
+| - SnapTapTempo   |         +-------------------+        +--------------------+
++------------------+
+```
 
-#### D. Chorus Controls (FX1 / FX2)
-* **A-Chorus / B-Chorus Rate (0.1 Hz - 10.0 Hz):**
-  * `0.1 Hz`: `8080f0000e00010000000e01010408000100000000000000000000000000000c0d0c0c0c0c030df7`
-  * `1.0 Hz`: `8080f0080400010000000e0101040800010000000000000000000000000000000000000800030ff7`
-  * `5.0 Hz`: `8080f0050000010000000e0101040800010000000000000000000000000000000000000a000400f7`
-* **A-Chorus / B-Chorus Depth (0 - 100):** Maps to AlgID `0`.
+### 4.1 Motion Plugin Interface (`IMotionPlugin`)
+Each motion mapping algorithm implements a uniform C++ interface:
 
-#### E. Delay Time & Tap Tempo
-* **Pure / Warm / Tape Delay Time (20ms - 1000ms):**
-  * Calculated as $t_{\text{ms}} = \frac{60000}{\text{BPM}} \times \text{NoteMultiplier}$
-  * Sent via Delay Parameter `parameters[7][1][ms_value]`
+```cpp
+class IMotionPlugin {
+public:
+    virtual ~IMotionPlugin() = default;
+    virtual const char* getName() const = 0;
+    virtual void init() = 0;
+    virtual void processIMU(float pitch, uint16_t roll, const float accel[3], const float gyro[3]) = 0;
+    virtual bool getTargetCommand(uint8_t& outModuleId, uint8_t& outAlgId, float& outValue) = 0;
+    virtual void reset() = 0;
+};
+```
+
+### 4.2 UI Screen Plugin Interface (`IScreenPlugin`)
+Each display view operates as an isolated screen component:
+
+```cpp
+class IScreenPlugin {
+public:
+    virtual ~IScreenPlugin() = default;
+    virtual const char* getTitle() const = 0;
+    virtual void buildUI(lv_obj_t* parentScreen) = 0;
+    virtual void updateUI() = 0; // Called on frame tick (30 Hz)
+    virtual void destroyUI() = 0;
+};
+```
 
 ---
 
-## 4. Motion Control & 6-Axis IMU Engine Design
+## 5. Security & Safety Specification
 
-### 4.1 IMU Orientation & Sensor Placement
-When mounted on the guitar headstock:
-* **X-Axis (Pitch):** Neck tilt (pointing the neck towards the ceiling vs floor).
-* **Y-Axis (Roll):** Instrument rotation along the neck axis (twisting the face of the guitar up/down).
-* **Z-Axis (Yaw):** Body swiveling left/right (performer body turn).
-
-```
-                      [HEADSTOCK]
-                      +---------+
-       Pitch (X)      | ESP32   |   Roll (Y)
-       <---^--->      |  IMU    |   <--(O)-->
-                      +----+----+
-                           |
-                           | [NECK]
-                           |
-```
-
-### 4.2 Signal Processing Pipeline
-
-```
-[MPU6886 Raw Accel/Gyro]
-       │
-       ▼
-[Low-Pass Filter (EMA / Alpha = 0.2)]
-       │
-       ▼
-[Complementary Filter (Pitch & Roll Angles)]
-       │
-       ▼
-[Deadband & Hysteresis Mapping]
-       │
-       ▼
-[Parameter Interpolator & Rate Limiter (Max 20 Hz updates)]
-       │
-       ▼
-[BLE Command Queue]
-```
-
-#### Complementary Filter Formula
-$$\theta_{\text{pitch}} = 0.98 \times (\theta_{\text{pitch}} + \omega_x \cdot \Delta t) + 0.02 \times \text{atan2}(a_y, a_z) \times \frac{180}{\pi}$$
-$$\phi_{\text{roll}} = 0.98 \times (\phi_{\text{roll}} + \omega_y \cdot \Delta t) + 0.02 \times \text{atan2}(-a_x, a_z) \times \frac{180}{\pi}$$
-
-### 4.3 Motion Mapping Presets
-
-1. **Preset 1: Neck Tilt Gain Control (Pitch Driven)**
-   * **Axis:** X-Axis (Pitch)
-   * **Neutral Angle:** $0^\circ$ (Horizontal playing position)
-   * **Active Range:** $+10^\circ$ to $+50^\circ$ (Neck up)
-   * **Target Parameter:** DRV Gain or AMP Gain ($0 \to 100$)
-   * **Effect:** Raising the guitar neck increases overdrive/gain for solos.
-
-2. **Preset 2: Mod-Roll Chorus Controller (Roll Driven)**
-   * **Axis:** Y-Axis (Roll)
-   * **Active Range:** $-25^\circ$ to $+25^\circ$
-   * **Target Parameter:** FX1/FX2 Chorus Depth or Chorus Rate ($0.1\text{Hz} \to 8.0\text{Hz}$)
-   * **Effect:** Twisting the guitar face upwards increases modulation speed/depth.
-
-3. **Preset 3: Spatial Reverb / Delay Expression (Pitch + Roll)**
-   * **Pitch ($+10^\circ \to +45^\circ$):** Delay Feedback ($10\% \to 85\%$)
-   * **Roll ($0^\circ \to +30^\circ$):** Reverb Mix ($10\% \to 70\%$)
-
-4. **Preset 4: Headstock Snap Tap Tempo (Gesture Driven)**
-   * **Gesture:** Sharp Z-axis acceleration spike ($> 2.2g$ peak within $80\text{ms}$).
-   * **Action:** Measures inter-tap time interval between two consecutive headstock taps to compute BPM and update Delay Time automatically.
+### 5.1 Threat Model & Security Mitigations
+1. **Unintended BLE Connection / Hijacking:**
+   * *Mitigation:* BLE scanning strictly filters by device name `Sonic Master BLE` and service UUID `03b80e5a-ede8-4b33-a751-6ce34ec4c700`. Option to enable Passkey/Numeric Comparison pairing (BLE Security Level 3) if supported by hardware.
+2. **Buffer Overflow & Malformed SysEx Vulnerabilities:**
+   * *Mitigation:* All received BLE/SysEx packets are length-checked before parsing. Maximum packet payload length is bounded to 256 bytes. Bounds checking is enforced on all array offsets.
+3. **Parameter Flood & Device Freezing:**
+   * *Mitigation:* The Protocol Task enforces a **rate limiter (max 20 Hz / 50ms interval)** for motion-triggered parameter updates. Motion delta thresholding prevents spamming identical byte writes.
+4. **Out-of-Bounds Motion Values:**
+   * *Mitigation:* All motion sensor readings pass through clamping functions (`std::clamp(val, min, max)`) before SysEx byte encoding to prevent parameter corruption.
 
 ---
 
-## 5. Touchscreen HCI & Graphical User Interface Architecture
+## 6. Open Source Licensing & Third-Party Compatibility
 
-The 2.0" 320x240 display is divided into three primary views, selectable via top tabs or swipe gestures:
+### 6.1 Project License
+This project and all associated code/firmware developed under this design are licensed under the **MIT License**.
 
-```
-+---------------------------------------------------+
-| [PERFORM]  |  [MOTION MAP]  |  [SETTINGS / CAL]   |  <- Top Tab Bar
-+---------------------------------------------------+
-|                                                   |
-|  PATCH: P04 - Heavy Lead *                        |  <- Current Patch & Save Status
-|                                                   |
-|  +-------------------+   +---------------------+  |
-|  |  PITCH (Neck UP)  |   |  TAP TEMPO (120BPM) |  |
-|  |  GAIN: 78%        |   |  [ TAP HERE ]       |  |
-|  +-------------------+   +---------------------+  |
-|                                                   |
-|  [ PREV PATCH ]                  [ NEXT PATCH ]   |  <- Quick Patch Switching
-|                                                   |
-+---------------------------------------------------+
-```
+```text
+MIT License
 
-### 5.1 UI Screen Descriptions
+Copyright (c) 2026
 
-1. **Performance Screen (Main View)**
-   * Large, high-contrast display of active Patch Name and Number (e.g. `P12: Scream Solo`).
-   * Live Motion Value Bar Graph (displays active Pitch/Roll tilt percentage).
-   * Big Touch **TAP TEMPO** Button with visual pulse indicator.
-   * Patch Up / Patch Down touch controls.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-2. **Motion Mapper Screen**
-   * Selector for Active Motion Mapping Profile (e.g., "Neck Up = Gain", "Roll = Chorus Rate", "Pitch = Reverb Feedback").
-   * Sensitivity & Deadband Sliders.
-   * Motion Toggle Switch (Enable/Disable motion control instantly).
-
-3. **Settings & Calibration Screen**
-   * **Calibrate Rest Position:** Calibrates the $0^\circ$ baseline for the current performer stance.
-   * **BLE Status & Reconnect Button.**
-   * Battery level indicator and signal RSSI strength.
-
----
-
-## 6. Firmware Software Architecture (ESP32 / FreeRTOS Task Design)
-
-To ensure smooth 60 FPS UI rendering, sub-10ms motion processing, and reliable BLE transmission without packet drops, the firmware is organized into FreeRTOS tasks distributed across the two ESP32 cores:
-
-```
-                                  [ ESP32 DUAL CORE ]
-             Core 0 (System & Comms)                   Core 1 (HCI & Processing)
-        +-------------------------------+        +-------------------------------+
-        |  BLE Central Task (Priority 5)|        |   UI / Render Task (Priority 3)|
-        |  - Handles GATT Connection    |        |   - LVGL / LovyanGFX Drawing  |
-        |  - Manages Queue Transmission |        |   - Touch event handling      |
-        +---------------+---------------+        +---------------+---------------+
-                        ^                                        ^
-                        | (FreeRTOS Queue)                       | (Mutex)
-        +---------------+---------------+        +---------------+---------------+
-        |  Protocol Task (Priority 4)   |        |   IMU Engine Task (Priority 4)|
-        |  - Encodes SysEx + CRC8       |        |   - 100 Hz MPU6886 Sample     |
-        |  - Decodes BLE Notifications  |        |   - Complementary Filter      |
-        +-------------------------------+        +-------------------------------+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 ```
 
-### 6.1 Task Table & Priorities
+### 6.2 Third-Party Library License Compatibility Matrix
 
-| Task Name | Core | Priority | Frequency | Responsibility |
-| :--- | :--- | :--- | :--- | :--- |
-| `Task_IMU` | Core 1 | 4 (High) | 100 Hz (10ms) | Reads MPU6886, calculates pitch/roll, applies deadband, detects tap gestures. |
-| `Task_GUI` | Core 1 | 3 (Med) | 30–60 Hz | Renders display UI, handles touch inputs, updates real-time sliders. |
-| `Task_Protocol` | Core 0 | 4 (High) | Event-Driven | Translates parameter/motion updates into SysEx packets with CRC-8. |
-| `Task_BLE` | Core 0 | 5 (Critical)| Event-Driven | Connects to Pocket Master, sends queued GATT writes, receives notification responses. |
+| Library / Dependency | License | Permitted for MIT Redistribution? | Compliance Strategy |
+| :--- | :--- | :--- | :--- |
+| **ESP-IDF / ESP32 Arduino Core** | Apache 2.0 | **Yes** | Apache 2.0 is compatible with MIT. |
+| **M5Unified / M5Core2** | MIT | **Yes** | Native MIT compatibility. |
+| **LVGL (Light and Versatile Graphics Library)** | MIT | **Yes** | Native MIT compatibility. |
+| **NimBLE-Arduino / ESP32 BLE** | Apache 2.0 / MIT | **Yes** | Apache 2.0/MIT compatible. |
+| **FreeRTOS** | MIT (with Exception) | **Yes** | Standard FreeRTOS kernel license. |
 
 ---
 
@@ -295,41 +224,129 @@ To enable autonomous software engineering agents and human developers to build, 
 ### 7.3 Virtual Pocket Master BLE Peripheral Emulator (End-to-End Comms)
 To test BLE GATT client discovery and SysEx command validation without the physical pedal:
 * **Option A (Python BLE Emulator):** A lightweight Python script using `bleak` / `bleno` running on a PC/laptop that advertises as `Sonic Master BLE` with GATT Characteristic `7772e5db-3868-4112-a1a9-f2669d106bf3`.
-  * The emulator validates incoming packets: checks for `80 80 F0` header, verifies the CRC-8 SMBus PEC checksum, prints parameter changes to console, and sends ACK notifications back to the ESP32.
-* **Option B (Local PocketEdit Web App):** Running `index.html` from `PocketEdit` connected via Web Bluetooth or Virtual USB MIDI (using `loopMIDI` on Windows or `IAC Driver` on macOS) to visually confirm that transmitted commands correctly manipulate the virtual pedal controls.
+* **Option B (Local PocketEdit Web App):** Running `index.html` from `PocketEdit` connected via Web Bluetooth or Virtual USB MIDI to visually confirm that transmitted commands correctly manipulate the virtual pedal controls.
 
 ---
 
-## 8. Autonomous Implementation Roadmap for Coding Agents
+## 8. Multi-Agent Development Backlog (Jira-Style Cards)
 
-Coding agents implementing this system should follow this modular sequence:
+The project is structured into **4 Epics** with independent, parallelizable **Task Cards**. Downstream agents can claim cards based on their module domain.
 
 ```
-[Stage 1: Core Drivers & Hardware Support]
-   ├── Initialize M5Stack Core2 (Display, Touch, MPU6886, AXP2101 PMIC)
-   └── Test IMU data read (Pitch / Roll calculation)
+================================================================================
+EPIC 1: CORE PLATFORM & PLUGIN INFRASTRUCTURE
+================================================================================
 
-[Stage 2: BLE Central & SysEx Encoder]
-   ├── Implement BLE Client scanning for "Sonic Master BLE"
-   ├── Implement CRC-8 (SMBus PEC polynomial 0x07) calculation
-   └── Verify command transmission (Preset change, Volume, Parameter write)
+[CARD-CORE-101] Project Bootstrap & FreeRTOS Dual-Core Task Skeleton
+- Priority: High | Component: Core Firmware | Dependencies: None
+- Assigned Agent Role: Agent-Platform
+- Description: Create the base CMake/PlatformIO ESP32 project structure with MIT License header.
+  Setup FreeRTOS tasks distributed across Core 0 (Comms) and Core 1 (UI/IMU).
+- Acceptance Criteria:
+  1. Compiles with ESP-IDF / Arduino Framework under MIT License.
+  2. Spawns Task_BLE and Task_Protocol on Core 0, Task_IMU and Task_GUI on Core 1.
+  3. Memory check shows zero memory leaks or stack overflows.
 
-[Stage 3: Motion Engine & Filtering]
-   ├── Implement Complementary Filter for Pitch & Roll
-   ├── Build motion-to-parameter interpolation with 20 Hz rate limiting
-   └── Build gesture detector for Headstock Snap Tap Tempo
+[CARD-CORE-102] Plugin Manager & Interface Definitions
+- Priority: High | Component: Architecture | Dependencies: CARD-CORE-101
+- Assigned Agent Role: Agent-Platform
+- Description: Implement IMotionPlugin, IScreenPlugin, and ICommsBackend abstract C++ interfaces
+  along with a dynamic PluginManager registry class.
+- Acceptance Criteria:
+  1. Plugins can register and unregister dynamically at runtime.
+  2. PluginManager routes IMU data ticks to active motion plugins.
+  3. Clean separation of header files in `src/plugins/`.
 
-[Stage 4: Touchscreen HCI / UI]
-   ├── Implement GUI screens (Performance, Motion Mapper, Calibration)
-   └── Wire UI controls to FreeRTOS queues & BLE protocol tasks
+================================================================================
+EPIC 2: COMMUNICATION & PROTOCOL PLUGINS
+================================================================================
 
-[Stage 5: Simulation & End-to-End Verification]
-   ├── Verify UI layout in LVGL Simulator / Wokwi
-   ├── Test BLE SysEx encoding against Virtual Pocket Master Peripheral
-   └── Validate battery management and auto-reconnect logic
+[CARD-BLE-201] Sonicake BLE Central Client Plugin
+- Priority: High | Component: Comms Backend | Dependencies: CARD-CORE-102
+- Assigned Agent Role: Agent-Comms
+- Description: Build NimBLE BLE Central client that scans for "Sonic Master BLE", connects,
+  discovers Service `03b80e5a...` and Characteristic `7772e5db...`, and subscribes to notifications.
+- Acceptance Criteria:
+  1. Auto-connects and auto-reconnects on connection loss.
+  2. Thread-safe write queue consumed by Core 0 BLE task.
+  3. Includes rate limiting (50ms min interval between writes).
+
+[CARD-BLE-202] SysEx Packet Encoder & CRC-8 SMBus Checksum
+- Priority: High | Component: Protocol | Dependencies: CARD-CORE-102
+- Assigned Agent Role: Agent-Comms
+- Description: Implement SysEx packet formatter wrapping `80 80 F0 [CRC8_EXP] [PAYLOAD] F7`
+  and CRC-8 SMBus PEC calculation (`0x07` polynomial).
+- Acceptance Criteria:
+  1. CRC-8 calculation matches `PocketEdit` reference output for all test vectors.
+  2. Bounds checking prevents payload overflow (> 256 bytes rejected).
+  3. Unit tests pass for preset switch, volume change, and parameter writes.
+
+================================================================================
+EPIC 3: MOTION SENSOR & IMU MAPPING PLUGINS
+================================================================================
+
+[CARD-IMU-301] MPU6886 Driver & Complementary Motion Engine
+- Priority: High | Component: Sensor Plugin | Dependencies: CARD-CORE-102
+- Assigned Agent Role: Agent-IMU
+- Description: Implement MPU6886 I2C reader running at 100 Hz, applying Exponential Moving
+  Average (EMA) filtering and Complementary Filter for Pitch and Roll angles.
+- Acceptance Criteria:
+  1. Outputs stable Pitch and Roll angles (-90° to +90°) with zero drift.
+  2. Calibrate rest position functionality implemented.
+  3. Zero I2C bus blocking on Task_IMU execution.
+
+[CARD-IMU-302] Motion Mapping Plugins (Pitch-Gain, Mod-Roll, Spatial-Reverb)
+- Priority: Medium | Component: Motion Plugins | Dependencies: CARD-IMU-301
+- Assigned Agent Role: Agent-IMU
+- Description: Create three `IMotionPlugin` modules:
+  1. `PitchGainPlugin`: Maps neck pitch angle to DRV/AMP Gain.
+  2. `ModRollChorusPlugin`: Maps headstock roll angle to Chorus Rate/Depth.
+  3. `SnapTapTempoPlugin`: Detects >2.2g acceleration snap gesture to calculate Tap Tempo.
+- Acceptance Criteria:
+  1. Smooth parameter interpolation with deadband thresholding.
+  2. Snap gesture reliably measures inter-tap interval for BPM calculation.
+
+================================================================================
+EPIC 4: TOUCHSCREEN UI & HCI PLUGINS
+================================================================================
+
+[CARD-UI-401] LVGL Performance Dashboard Screen Plugin
+- Priority: High | Component: Touch UI | Dependencies: CARD-CORE-102
+- Assigned Agent Role: Agent-UI
+- Description: Implement main Performance View screen using LVGL (320x240 resolution):
+  - Displays current Preset Name & Number.
+  - Live Pitch/Roll Motion Bar Graph.
+  - Large Touch TAP TEMPO button with visual beat pulse.
+  - Patch increment/decrement buttons.
+- Acceptance Criteria:
+  1. Smooth 30+ FPS rendering without screen tearing.
+  2. Touch tap tempo button calculates BPM accurately.
+  3. Preset selection updates display and triggers BLE command queue.
+
+[CARD-UI-402] Motion Mapper & Calibration Screen Plugins
+- Priority: Medium | Component: Touch UI | Dependencies: CARD-UI-401
+- Assigned Agent Role: Agent-UI
+- Description: Build secondary UI screens for selecting active motion plugin, adjusting
+  sensitivity/deadband sliders, and zeroing IMU resting position.
+- Acceptance Criteria:
+  1. Swipe or tab gesture switches screens cleanly.
+  2. Calibration button zeros resting pitch/roll baseline immediately.
+
+================================================================================
+EPIC 5: SIMULATION & TESTING PLUGINS
+================================================================================
+
+[CARD-SIM-501] Wokwi Simulator Configuration & Python Virtual BLE Peripheral
+- Priority: Medium | Component: Testing | Dependencies: CARD-BLE-201, CARD-BLE-202
+- Assigned Agent Role: Agent-QA
+- Description: Provide `diagram.json` for Wokwi ESP32-S3 + MPU6050 + ILI9341 touch simulation,
+  and a standalone Python script `virtual_pocket_master.py` that emulates the BLE pedal.
+- Acceptance Criteria:
+  1. Python script advertises as "Sonic Master BLE" and logs incoming SysEx packets.
+  2. Wokwi interactive sliders allow simulated tilt motion testing in browser.
 ```
 
 ---
 
-## 9. Summary
-This specification provides a complete, self-contained architecture for an off-the-shelf, headstock-mounted ESP32 motion controller for the Sonicake Pocket Master. All hardware specs, BLE SysEx protocol details, CRC checksum algorithms, IMU complementary filtering equations, FreeRTOS task mappings, and Virtual Emulators (Wokwi, LVGL, Python BLE Loopback) are fully defined.
+## 9. Summary & License Confirmation
+This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. The Jira-style task cards allow autonomous development agents to claim and build platform, comms, IMU, UI, and simulation modules in parallel.
