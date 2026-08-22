@@ -6,7 +6,7 @@ This specification defines the spec-driven design for an out-of-the-box, no-sold
 
 The controller communicates wirelessly over **Bluetooth Low Energy (BLE)** (or optionally USB MIDI) with the **Sonicake Pocket Master** multi-effects pedal. Utilizing a 6-axis Inertial Measurement Unit (IMU - 3-axis accelerometer + 3-axis gyroscope), the performer can control effect parameters dynamically through physical instrument motion (e.g., tilting the neck up/down for Gain or Wah, pitching/rolling for Chorus speed or Delay feedback) and interact with a touch-driven graphical UI for preset management, parameter mapping, and Tap Tempo.
 
-This design is structured to serve as the blueprint for downstream software engineering agents to implement the firmware autonomously, leveraging a **modular plugin architecture** and **Jira-style task breakdown measured in Tokens** for parallel multi-agent development and context budgeting.
+This design is structured to serve as the blueprint for downstream software engineering agents to implement the Proof-of-Concept (POC) firmware autonomously, leveraging a **modular plugin architecture**, **intuitive swipe gesture UI navigation**, and **Jira-style task breakdown measured in Tokens**.
 
 ---
 
@@ -117,11 +117,11 @@ To allow multiple coding agents to work independently on different features with
 |  Motion Plugins  |         |  UI Screen        |        |  Comms Backend     |
 |  (IMU Processors)|         |  Plugins (LVGL)   |        |  Plugins           |
 +------------------+         +-------------------+        +--------------------+
-| - PitchGain      |         | - PerformView     |        | - BLE Central      |
-| - ModRollChorus  |         | - MotionMapEditor |        | - USB MIDI         |
-| - SpatialReverb  |         | - CalibrationUI   |        | - Virtual Simulator|
-| - SnapTapTempo   |         +-------------------+        +--------------------+
-+------------------+
+| - PitchGain      |         | - Mode1_TapTempo  |        | - BLE Central      |
+| - ModRollChorus* |         | - Mode2_NeckGain  |        | - USB MIDI         |
+| - SpatialReverb* |         | - Mode3_Config    |        | - Virtual Simulator|
++------------------+         +-------------------+        +--------------------+
+                                (* Future Expansion)
 ```
 
 ### 4.1 Motion Plugin Interface (`IMotionPlugin`)
@@ -133,14 +133,14 @@ public:
     virtual ~IMotionPlugin() = default;
     virtual const char* getName() const = 0;
     virtual void init() = 0;
-    virtual void processIMU(float pitch, uint16_t roll, const float accel[3], const float gyro[3]) = 0;
+    virtual void processIMU(float pitch, float roll, const float accel[3], const float gyro[3]) = 0;
     virtual bool getTargetCommand(uint8_t& outModuleId, uint8_t& outAlgId, float& outValue) = 0;
     virtual void reset() = 0;
 };
 ```
 
 ### 4.2 UI Screen Plugin Interface (`IScreenPlugin`)
-Each display view operates as an isolated screen component:
+Each display view operates as an isolated screen component with touch swipe gesture hooks:
 
 ```cpp
 class IScreenPlugin {
@@ -155,9 +155,46 @@ public:
 
 ---
 
-## 5. Security & Safety Specification
+## 5. Touchscreen HCI & POC Mode Architecture (Swipe Navigation)
 
-### 5.1 Threat Model & Security Mitigations
+For maximum simplicity during live performance, the UI relies on a **simple Swipe Left or Swipe Right gesture** on the 2.0" 320x240 display to navigate between modes.
+
+```
+       SWIPE LEFT ◄---------------------------------► SWIPE RIGHT
++-----------------------+     +-----------------------+     +-----------------------+
+| MODE 1: TAP TEMPO     |     | MODE 2: MOTION GAIN   |     | MODE 3: CONFIG MENU   |
+| [ TOUCH DISPLAY ]     |     | [ NECK TILT GAIN ]    |     | [ CAL / BLE SETTINGS ]|
+| Evaluates time        | <-> | Pitch angle -> Gain   | <-> | Calibrate Baseline    |
+| between touches       |     | Live Bar Graph        |     | BLE Connect / Reconnect|
++-----------------------+     +-----------------------+     +-----------------------+
+```
+
+### 5.1 POC Mode Breakdown
+
+1. **Mode 1: Touch Screen Tap Tempo Mode**
+   * **Primary Function:** Touch display area evaluates the time interval between sequential touch taps.
+   * **Calculation:** Computes BPM ($BPM = \frac{60000}{\Delta t_{\text{ms}}}$) and maps to Delay Time (ms).
+   * **Visual Feedback:** Large pulsating target button with active BPM counter and note division indicator.
+   * **SysEx Action:** Transmits updated Delay Time (`parameters[7][1][ms_value]`) over BLE.
+
+2. **Mode 2: Neck Tilt Motion Gain Mode**
+   * **Primary Function:** Reads 6-axis IMU (MPU6886) pitch angle (neck pointing up/down).
+   * **Active Range:** $+10^\circ \to +50^\circ$ neck tilt.
+   * **Visual Feedback:** Live vertical/horizontal bar graph showing real-time tilt percentage and calculated Gain level ($0\% \to 100\%$).
+   * **SysEx Action:** Transmits DRV Gain (`parameters[2][0][val]`) or AMP Gain (`parameters[3][0][val]`).
+
+3. **Mode 3: Config & Calibration Menu (Last Mode)**
+   * **Primary Function:** System calibration and connection setup.
+   * **Controls:**
+     * **Calibrate Rest Baseline:** Sets the $0^\circ$ neutral neck posture for the musician's playing stance.
+     * **BLE Connect / Reconnect Toggle:** Connects or re-pairs with `Sonic Master BLE`.
+     * **Battery Status & BLE Signal RSSI indicator.**
+
+---
+
+## 6. Security & Safety Specification
+
+### 6.1 Threat Model & Security Mitigations
 1. **Unintended BLE Connection / Hijacking:**
    * *Mitigation:* BLE scanning strictly filters by device name `Sonic Master BLE` and service UUID `03b80e5a-ede8-4b33-a751-6ce34ec4c700`. Option to enable Passkey/Numeric Comparison pairing (BLE Security Level 3) if supported by hardware.
 2. **Buffer Overflow & Malformed SysEx Vulnerabilities:**
@@ -169,9 +206,9 @@ public:
 
 ---
 
-## 6. Open Source Licensing & Third-Party Compatibility
+## 7. Open Source Licensing & Third-Party Compatibility
 
-### 6.1 Project License
+### 7.1 Project License
 This project and all associated code/firmware developed under this design are licensed under the **MIT License**.
 
 ```text
@@ -190,7 +227,7 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 ```
 
-### 6.2 Third-Party Library License Compatibility Matrix
+### 7.2 Third-Party Library License Compatibility Matrix
 
 | Library / Dependency | License | Permitted for MIT Redistribution? | Compliance Strategy |
 | :--- | :--- | :--- | :--- |
@@ -202,11 +239,11 @@ copies or substantial portions of the Software.
 
 ---
 
-## 7. Emulation & Virtual Simulation Strategy
+## 8. Emulation & Virtual Simulation Strategy
 
 To enable autonomous software engineering agents and human developers to build, test, and verify the ESP32 firmware without requiring physical hardware immediately on hand, three simulation layers are specified:
 
-### 7.1 Wokwi ESP32 Hardware Simulator (Firmware & IMU Emulation)
+### 8.1 Wokwi ESP32 Hardware Simulator (Firmware & IMU Emulation)
 * **Platform:** [Wokwi.com](https://wokwi.com/)
 * **Emulated Components:**
   * ESP32-S3 / ESP32 Dual Core board model.
@@ -216,19 +253,19 @@ To enable autonomous software engineering agents and human developers to build, 
   * Wokwi provides interactive GUI sliders for Accel X/Y/Z and Gyro X/Y/Z to simulate tilting the headstock up/down (Pitch) and twisting (Roll) in real time.
 * **CLI Execution:** Supports `wokwi-cli` in continuous integration (CI) workflows to execute automated C++/Arduino/ESP-IDF tests.
 
-### 7.2 LVGL Desktop Simulator (Touchscreen HCI Prototyping)
+### 8.2 LVGL Desktop Simulator (Touchscreen HCI Prototyping)
 * **Platform:** LVGL Desktop Simulator (VS Code / SDL2 for Linux/macOS/Windows) or LVGL WebAssembly.
 * **Target Screen Resolution:** 320x240 pixels (matching M5Stack Core2).
 * **Usage:** Allows rapid UI development, widget layout verification, mouse-driven touch simulation, and Tap Tempo button responsiveness testing before flashing onto ESP32 hardware.
 
-### 7.3 Virtual Pocket Master BLE Peripheral Emulator (End-to-End Comms)
+### 8.3 Virtual Pocket Master BLE Peripheral Emulator (End-to-End Comms)
 To test BLE GATT client discovery and SysEx command validation without the physical pedal:
 * **Option A (Python BLE Emulator):** A lightweight Python script using `bleak` / `bleno` running on a PC/laptop that advertises as `Sonic Master BLE` with GATT Characteristic `7772e5db-3868-4112-a1a9-f2669d106bf3`.
 * **Option B (Local PocketEdit Web App):** Running `index.html` from `PocketEdit` connected via Web Bluetooth or Virtual USB MIDI to visually confirm that transmitted commands correctly manipulate the virtual pedal controls.
 
 ---
 
-## 8. Multi-Agent Development Backlog & Token Metrics (Jira-Style Cards)
+## 9. Multi-Agent Development Backlog & Token Metrics (Jira-Style Cards)
 
 Tasks are structured into **5 Epics** with independent, parallelizable **Task Cards**. All workload estimations, agent allocation budgets, and execution complexity metrics are expressed in **Token Budgets** (measured as LLM prompt & completion context window consumption per agent implementation turn):
 
@@ -245,24 +282,24 @@ EPIC 1: CORE PLATFORM & PLUGIN INFRASTRUCTURE
 
 [CARD-CORE-101] Project Bootstrap & FreeRTOS Dual-Core Task Skeleton
 - Priority: High | Component: Core Firmware | Dependencies: None
+- Token Budget: ~18,000 Tokens
 - Assigned Agent Role: Agent-Platform
-- Token Budget: ~18,000 Tokens (Max Context Window Target)
-- Description: Create the base CMake/PlatformIO ESP32 project structure with MIT License header.
+- Description: Create base CMake/PlatformIO ESP32 project structure with MIT License header.
   Setup FreeRTOS tasks distributed across Core 0 (Comms) and Core 1 (UI/IMU).
 - Acceptance Criteria:
   1. Compiles with ESP-IDF / Arduino Framework under MIT License.
   2. Spawns Task_BLE and Task_Protocol on Core 0, Task_IMU and Task_GUI on Core 1.
   3. Memory check shows zero memory leaks or stack overflows.
 
-[CARD-CORE-102] Plugin Manager & Interface Definitions
+[CARD-CORE-102] Plugin Manager & Swipe Gesture Navigation Framework
 - Priority: High | Component: Architecture | Dependencies: CARD-CORE-101
-- Token Budget: ~15,000 Tokens
+- Token Budget: ~16,000 Tokens
 - Assigned Agent Role: Agent-Platform
-- Description: Implement IMotionPlugin, IScreenPlugin, and ICommsBackend abstract C++ interfaces
-  along with a dynamic PluginManager registry class.
+- Description: Implement IMotionPlugin, IScreenPlugin, and ISwipeNavigation framework.
+  Detect left/right swipe gestures to cycle between Mode 1, Mode 2, and Mode 3.
 - Acceptance Criteria:
-  1. Plugins can register and unregister dynamically at runtime.
-  2. PluginManager routes IMU data ticks to active motion plugins.
+  1. Touch swipe left/right transitions between Mode 1, Mode 2, and Mode 3.
+  2. Active mode screen is built and rendered cleanly.
   3. Clean separation of header files in `src/plugins/`.
 
 ================================================================================
@@ -295,73 +332,66 @@ EPIC 2: COMMUNICATION & PROTOCOL PLUGINS
 EPIC 3: MOTION SENSOR & IMU MAPPING PLUGINS
 ================================================================================
 
-[CARD-IMU-301] MPU6886 Driver & Complementary Motion Engine
+[CARD-IMU-301] MPU6886 Driver & Pitch Motion Engine
 - Priority: High | Component: Sensor Plugin | Dependencies: CARD-CORE-102
 - Token Budget: ~25,000 Tokens
 - Assigned Agent Role: Agent-IMU
 - Description: Implement MPU6886 I2C reader running at 100 Hz, applying Exponential Moving
-  Average (EMA) filtering and Complementary Filter for Pitch and Roll angles.
+  Average (EMA) filtering and Complementary Filter for Pitch angle (+10° to +50° neck tilt).
 - Acceptance Criteria:
-  1. Outputs stable Pitch and Roll angles (-90° to +90°) with zero drift.
-  2. Calibrate rest position functionality implemented.
+  1. Outputs stable Pitch angle with zero drift.
+  2. Baseline resting angle calibration implemented.
   3. Zero I2C bus blocking on Task_IMU execution.
 
-[CARD-IMU-302] Motion Mapping Plugins (Pitch-Gain, Mod-Roll, Spatial-Reverb)
+[CARD-IMU-302] PitchGain Motion Plugin (POC Mode 2)
 - Priority: Medium | Component: Motion Plugins | Dependencies: CARD-IMU-301
-- Token Budget: ~35,000 Tokens
+- Token Budget: ~20,000 Tokens
 - Assigned Agent Role: Agent-IMU
-- Description: Create three `IMotionPlugin` modules:
-  1. `PitchGainPlugin`: Maps neck pitch angle to DRV/AMP Gain.
-  2. `ModRollChorusPlugin`: Maps headstock roll angle to Chorus Rate/Depth.
-  3. `SnapTapTempoPlugin`: Detects >2.2g acceleration snap gesture to calculate Tap Tempo.
+- Description: Create `PitchGainPlugin` mapping neck pitch angle to DRV/AMP Gain (0-100).
 - Acceptance Criteria:
-  1. Smooth parameter interpolation with deadband thresholding.
-  2. Snap gesture reliably measures inter-tap interval for BPM calculation.
+  1. Smooth gain interpolation with deadband thresholding.
+  2. Clamps target gain between 0 and 100 before transmitting.
 
 ================================================================================
-EPIC 4: TOUCHSCREEN UI & HCI PLUGINS
+EPIC 4: TOUCHSCREEN UI & POC SCREEN PLUGINS
 ================================================================================
 
-[CARD-UI-401] LVGL Performance Dashboard Screen Plugin
+[CARD-UI-401] POC Mode 1: Tap Tempo Touch Screen Plugin
 - Priority: High | Component: Touch UI | Dependencies: CARD-CORE-102
-- Token Budget: ~38,000 Tokens
-- Assigned Agent Role: Agent-UI
-- Description: Implement main Performance View screen using LVGL (320x240 resolution):
-  - Displays current Preset Name & Number.
-  - Live Pitch/Roll Motion Bar Graph.
-  - Large Touch TAP TEMPO button with visual beat pulse.
-  - Patch increment/decrement buttons.
-- Acceptance Criteria:
-  1. Smooth rendering without screen tearing.
-  2. Touch tap tempo button calculates BPM accurately.
-  3. Preset selection updates display and triggers BLE command queue.
-
-[CARD-UI-402] Motion Mapper & Calibration Screen Plugins
-- Priority: Medium | Component: Touch UI | Dependencies: CARD-UI-401
 - Token Budget: ~28,000 Tokens
 - Assigned Agent Role: Agent-UI
-- Description: Build secondary UI screens for selecting active motion plugin, adjusting
-  sensitivity/deadband sliders, and zeroing IMU resting position.
+- Description: Implement Mode 1 UI screen with LVGL:
+  - Touch display evaluates time between touches to calculate BPM.
+  - Displays calculated BPM and transmits Delay Time parameter to pedal over BLE.
 - Acceptance Criteria:
-  1. Swipe or tab gesture switches screens cleanly.
-  2. Calibration button zeros resting pitch/roll baseline immediately.
+  1. Evaluates inter-tap touch intervals accurately.
+  2. Triggers Delay Time parameter write on each tap.
+
+[CARD-UI-402] POC Mode 2: Motion Gain Screen Plugin & Mode 3 Config Screen Plugin
+- Priority: High | Component: Touch UI | Dependencies: CARD-UI-401
+- Token Budget: ~32,000 Tokens
+- Assigned Agent Role: Agent-UI
+- Description: Implement Mode 2 UI (Live Neck Tilt Gain Bar Graph) and Mode 3 Config Menu
+  (IMU Calibration button, BLE connect status, Battery level).
+- Acceptance Criteria:
+  1. Mode 2 renders real-time tilt bar graph.
+  2. Mode 3 calibration button zeroes resting IMU posture.
 
 ================================================================================
 EPIC 5: SIMULATION & TESTING PLUGINS
 ================================================================================
 
-[CARD-SIM-501] Wokwi Simulator Configuration & Python Virtual BLE Peripheral
+[CARD-SIM-501] Wokwi Simulator & Python Virtual BLE Peripheral
 - Priority: Medium | Component: Testing | Dependencies: CARD-BLE-201, CARD-BLE-202
 - Token Budget: ~20,000 Tokens
 - Assigned Agent Role: Agent-QA
-- Description: Provide `diagram.json` for Wokwi ESP32-S3 + MPU6050 + ILI9341 touch simulation,
-  and a standalone Python script `virtual_pocket_master.py` that emulates the BLE pedal.
+- Description: Provide Wokwi simulation config and Python BLE virtual pedal emulator.
 - Acceptance Criteria:
-  1. Python script advertises as "Sonic Master BLE" and logs incoming SysEx packets.
-  2. Wokwi interactive sliders allow simulated tilt motion testing in browser.
+  1. Python script logs incoming Gain and Tap Tempo SysEx packets.
+  2. Wokwi sliders simulate neck tilt motion in browser.
 ```
 
 ---
 
-## 9. Summary & License Confirmation
-This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. All task estimations, context window limits, and agent execution metrics are measured in **Tokens**, allowing autonomous development agents to claim, budget, and implement platform, comms, IMU, UI, and simulation modules in parallel.
+## 10. Summary & License Confirmation
+This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. The UI is streamlined for POC testing via simple **Left/Right swipe gestures** across **Tap Tempo Mode**, **Motion Gain Mode**, and the **Config Menu**, with all task estimations, context window limits, and agent execution metrics measured in **Tokens**.
