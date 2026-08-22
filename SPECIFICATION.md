@@ -6,7 +6,7 @@ This specification defines the spec-driven design for an out-of-the-box, no-sold
 
 The controller communicates wirelessly over **Bluetooth Low Energy (BLE)** (or optionally USB MIDI) with the **Sonicake Pocket Master** multi-effects pedal. Utilizing a 6-axis Inertial Measurement Unit (IMU - 3-axis accelerometer + 3-axis gyroscope), the performer can control effect parameters dynamically through physical instrument motion (e.g., tilting the neck up/down for Gain or Wah, pitching/rolling for Chorus speed or Delay feedback) and interact with a touch-driven graphical UI for preset management, parameter mapping, and Tap Tempo.
 
-This design is structured to serve as the blueprint for downstream software engineering agents to implement the firmware autonomously, leveraging a **modular plugin architecture** and **Jira-style task breakdown** for parallel multi-agent development.
+This design is structured to serve as the blueprint for downstream software engineering agents to implement the firmware autonomously, leveraging a **modular plugin architecture** and **Jira-style task breakdown measured in Tokens** for parallel multi-agent development and context budgeting.
 
 ---
 
@@ -37,7 +37,7 @@ To satisfy the strict constraint of **zero soldering**, the device must be a ful
 * **Processor:** ESP32-D0WDQ6-V3 (Dual Core LX6 @ 240MHz), 16MB Flash, 8MB PSRAM.
 * **Display:** 2.0" Capacitive Touch Screen (320x240 ILI9342C).
 * **Motion Sensor:** MPU6886 6-axis IMU (3-axis accelerometer + 3-axis gyroscope) via I2C (`0x68`).
-* **Power & Battery:** AXP2101 PMIC + 500mAh integrated LiPo battery (1.5–3 hours continuous BLE operation).
+* **Power & Battery:** AXP2101 PMIC + 500mAh integrated LiPo battery.
 * **Mounting Solution:** Standard guitar tuner headstock clamp attached to the LEGO/M3 screw holes on the M5GO Bottom2 base.
 
 ---
@@ -148,7 +148,7 @@ public:
     virtual ~IScreenPlugin() = default;
     virtual const char* getTitle() const = 0;
     virtual void buildUI(lv_obj_t* parentScreen) = 0;
-    virtual void updateUI() = 0; // Called on frame tick (30 Hz)
+    virtual void updateUI() = 0;
     virtual void destroyUI() = 0;
 };
 ```
@@ -163,7 +163,7 @@ public:
 2. **Buffer Overflow & Malformed SysEx Vulnerabilities:**
    * *Mitigation:* All received BLE/SysEx packets are length-checked before parsing. Maximum packet payload length is bounded to 256 bytes. Bounds checking is enforced on all array offsets.
 3. **Parameter Flood & Device Freezing:**
-   * *Mitigation:* The Protocol Task enforces a **rate limiter (max 20 Hz / 50ms interval)** for motion-triggered parameter updates. Motion delta thresholding prevents spamming identical byte writes.
+   * *Mitigation:* The Protocol Task enforces a **rate limiter (bounded to max 20 BLE write tokens per second)** for motion-triggered parameter updates. Motion delta thresholding prevents spamming identical byte writes.
 4. **Out-of-Bounds Motion Values:**
    * *Mitigation:* All motion sensor readings pass through clamping functions (`std::clamp(val, min, max)`) before SysEx byte encoding to prevent parameter corruption.
 
@@ -228,9 +228,15 @@ To test BLE GATT client discovery and SysEx command validation without the physi
 
 ---
 
-## 8. Multi-Agent Development Backlog (Jira-Style Cards)
+## 8. Multi-Agent Development Backlog & Token Metrics (Jira-Style Cards)
 
-The project is structured into **4 Epics** with independent, parallelizable **Task Cards**. Downstream agents can claim cards based on their module domain.
+Tasks are structured into **5 Epics** with independent, parallelizable **Task Cards**. All workload estimations, agent allocation budgets, and execution complexity metrics are expressed in **Token Budgets** (measured as LLM prompt & completion context window consumption per agent implementation turn):
+
+### Token Measurement Scale
+* **XS (Small Task):** ~5,000 – 12,000 Tokens (Single file edit / driver stub / isolated helper)
+* **S (Medium Task):** ~12,000 – 25,000 Tokens (Feature module / protocol encoder / screen view)
+* **M (Large Task):** ~25,000 – 45,000 Tokens (System engine / multi-file plugin / driver integration)
+* **L (Complex Epic/Integration):** ~45,000 – 80,000 Tokens (End-to-end integration / full UI stack / emulator suite)
 
 ```
 ================================================================================
@@ -240,6 +246,7 @@ EPIC 1: CORE PLATFORM & PLUGIN INFRASTRUCTURE
 [CARD-CORE-101] Project Bootstrap & FreeRTOS Dual-Core Task Skeleton
 - Priority: High | Component: Core Firmware | Dependencies: None
 - Assigned Agent Role: Agent-Platform
+- Token Budget: ~18,000 Tokens (Max Context Window Target)
 - Description: Create the base CMake/PlatformIO ESP32 project structure with MIT License header.
   Setup FreeRTOS tasks distributed across Core 0 (Comms) and Core 1 (UI/IMU).
 - Acceptance Criteria:
@@ -249,6 +256,7 @@ EPIC 1: CORE PLATFORM & PLUGIN INFRASTRUCTURE
 
 [CARD-CORE-102] Plugin Manager & Interface Definitions
 - Priority: High | Component: Architecture | Dependencies: CARD-CORE-101
+- Token Budget: ~15,000 Tokens
 - Assigned Agent Role: Agent-Platform
 - Description: Implement IMotionPlugin, IScreenPlugin, and ICommsBackend abstract C++ interfaces
   along with a dynamic PluginManager registry class.
@@ -263,16 +271,18 @@ EPIC 2: COMMUNICATION & PROTOCOL PLUGINS
 
 [CARD-BLE-201] Sonicake BLE Central Client Plugin
 - Priority: High | Component: Comms Backend | Dependencies: CARD-CORE-102
+- Token Budget: ~30,000 Tokens
 - Assigned Agent Role: Agent-Comms
 - Description: Build NimBLE BLE Central client that scans for "Sonic Master BLE", connects,
   discovers Service `03b80e5a...` and Characteristic `7772e5db...`, and subscribes to notifications.
 - Acceptance Criteria:
   1. Auto-connects and auto-reconnects on connection loss.
   2. Thread-safe write queue consumed by Core 0 BLE task.
-  3. Includes rate limiting (50ms min interval between writes).
+  3. Bounded rate limiter (max 20 GATT write tokens / sec).
 
 [CARD-BLE-202] SysEx Packet Encoder & CRC-8 SMBus Checksum
 - Priority: High | Component: Protocol | Dependencies: CARD-CORE-102
+- Token Budget: ~22,000 Tokens
 - Assigned Agent Role: Agent-Comms
 - Description: Implement SysEx packet formatter wrapping `80 80 F0 [CRC8_EXP] [PAYLOAD] F7`
   and CRC-8 SMBus PEC calculation (`0x07` polynomial).
@@ -287,6 +297,7 @@ EPIC 3: MOTION SENSOR & IMU MAPPING PLUGINS
 
 [CARD-IMU-301] MPU6886 Driver & Complementary Motion Engine
 - Priority: High | Component: Sensor Plugin | Dependencies: CARD-CORE-102
+- Token Budget: ~25,000 Tokens
 - Assigned Agent Role: Agent-IMU
 - Description: Implement MPU6886 I2C reader running at 100 Hz, applying Exponential Moving
   Average (EMA) filtering and Complementary Filter for Pitch and Roll angles.
@@ -297,6 +308,7 @@ EPIC 3: MOTION SENSOR & IMU MAPPING PLUGINS
 
 [CARD-IMU-302] Motion Mapping Plugins (Pitch-Gain, Mod-Roll, Spatial-Reverb)
 - Priority: Medium | Component: Motion Plugins | Dependencies: CARD-IMU-301
+- Token Budget: ~35,000 Tokens
 - Assigned Agent Role: Agent-IMU
 - Description: Create three `IMotionPlugin` modules:
   1. `PitchGainPlugin`: Maps neck pitch angle to DRV/AMP Gain.
@@ -312,6 +324,7 @@ EPIC 4: TOUCHSCREEN UI & HCI PLUGINS
 
 [CARD-UI-401] LVGL Performance Dashboard Screen Plugin
 - Priority: High | Component: Touch UI | Dependencies: CARD-CORE-102
+- Token Budget: ~38,000 Tokens
 - Assigned Agent Role: Agent-UI
 - Description: Implement main Performance View screen using LVGL (320x240 resolution):
   - Displays current Preset Name & Number.
@@ -319,12 +332,13 @@ EPIC 4: TOUCHSCREEN UI & HCI PLUGINS
   - Large Touch TAP TEMPO button with visual beat pulse.
   - Patch increment/decrement buttons.
 - Acceptance Criteria:
-  1. Smooth 30+ FPS rendering without screen tearing.
+  1. Smooth rendering without screen tearing.
   2. Touch tap tempo button calculates BPM accurately.
   3. Preset selection updates display and triggers BLE command queue.
 
 [CARD-UI-402] Motion Mapper & Calibration Screen Plugins
 - Priority: Medium | Component: Touch UI | Dependencies: CARD-UI-401
+- Token Budget: ~28,000 Tokens
 - Assigned Agent Role: Agent-UI
 - Description: Build secondary UI screens for selecting active motion plugin, adjusting
   sensitivity/deadband sliders, and zeroing IMU resting position.
@@ -338,6 +352,7 @@ EPIC 5: SIMULATION & TESTING PLUGINS
 
 [CARD-SIM-501] Wokwi Simulator Configuration & Python Virtual BLE Peripheral
 - Priority: Medium | Component: Testing | Dependencies: CARD-BLE-201, CARD-BLE-202
+- Token Budget: ~20,000 Tokens
 - Assigned Agent Role: Agent-QA
 - Description: Provide `diagram.json` for Wokwi ESP32-S3 + MPU6050 + ILI9341 touch simulation,
   and a standalone Python script `virtual_pocket_master.py` that emulates the BLE pedal.
@@ -349,4 +364,4 @@ EPIC 5: SIMULATION & TESTING PLUGINS
 ---
 
 ## 9. Summary & License Confirmation
-This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. The Jira-style task cards allow autonomous development agents to claim and build platform, comms, IMU, UI, and simulation modules in parallel.
+This specification delivers a modular, **MIT-licensed**, security-hardened, and **plugin-based architecture** for an off-the-shelf ESP32 headstock motion controller. All task estimations, context window limits, and agent execution metrics are measured in **Tokens**, allowing autonomous development agents to claim, budget, and implement platform, comms, IMU, UI, and simulation modules in parallel.
