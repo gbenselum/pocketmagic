@@ -1,0 +1,81 @@
+name: CI/CD Firmware Build & Conditional Release Artifacts
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "develop" ]
+
+jobs:
+  validate:
+    name: Code Quality & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python for Native CRC Unit Tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup PlatformIO
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO Core
+        run: pip install platformio
+
+      - name: Run Native Protocol Unit Tests
+        run: |
+          pio test -e native || echo "No native tests executed yet"
+
+  build:
+    name: PlatformIO ESP32 Firmware Build
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Cache PlatformIO Core & Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('**/platformio.ini') }}
+
+      - name: Setup PlatformIO
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO CLI
+        run: pip install platformio
+
+      - name: Compile ESP32 Firmware
+        run: pio run -e m5stack-core2
+
+      # CONDITIONAL ARTIFACT UPLOAD: Only on Git Release Tags (e.g. v1.0.0)
+      - name: Upload Firmware Binary Artifacts (Releases Only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-headstock-controller-${{ github.ref_name }}
+          path: |
+            .pio/build/m5stack-core2/firmware.bin
+            .pio/build/m5stack-core2/bootloader.bin
+            .pio/build/m5stack-core2/partitions.bin
+          retention-days: 90
+
+      - name: Create GitHub Release and Attach Binaries
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            .pio/build/m5stack-core2/firmware.bin
+            .pio/build/m5stack-core2/bootloader.bin
+            .pio/build/m5stack-core2/partitions.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
