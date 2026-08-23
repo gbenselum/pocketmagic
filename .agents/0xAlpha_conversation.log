@@ -119,3 +119,38 @@ project has no setup scripts worth wiring during preplan.
 **Manual steps that remain for the user (app-storage, not file-based):** install Orca,
 enable OpenCode in Settings -> Agents, optionally paste the seven Quick Command rows, and
 enable Experimental -> orchestration if Pattern C is wanted.
+
+---
+
+## 2026-08-23 — Token Accounting System
+
+**User requirement:** per-agent consumption ledgers, unified root total refreshed on
+merges to main, token disclosure in every PR, and a README footer stating the final
+total ("This application was made with N tokens").
+
+**Design constraint (stated to user):** an agent cannot introspect its own usage
+mid-session; authoritative numbers are the OpenCode harness session totals shown at
+session end. The protocol forbids estimates.
+
+**Delivered:**
+1. `.agents/agent_<name>_consumed_tokens.md` x7 — one table per agent
+   (Date/Time | Input | Output | Session Total | Description <=40 chars).
+2. `scripts/token_ledger.py` — `log` appends validated rows (rejects descriptions over
+   40 chars and unknown agents); `summarize` rebuilds the root total from all ledgers
+   and auto-patches the README footer line.
+3. Root `total_tokensconsumed.md` — per-agent sessions/in/out/total table + grand total,
+   regenerated on every merge to main by the merging agent (rule 6.2 of AGENTS.md).
+4. `README.md` created for the repo, ending with the required sentence
+   (currently "0 tokens" until the first logged session).
+5. `.github/pull_request_template.md` — mandatory Tokens Consumed table whose PR TOTAL
+   must equal the sum of ledger rows included in that PR.
+6. `AGENTS.md` section 6 "Token Accounting Rules (Mandatory)" — session-end logging,
+   merge-time summarize, PR disclosure, file ownership map.
+
+**Tested:** valid row append; >40-char description rejection; unknown-agent rejection;
+summarize zero-state generation; README footer patch. Test row reverted before commit;
+ledgers start empty at zero.
+
+**Compliance note:** enforcement is procedural (AGENTS.md mandate + PR template + script
+validation), not technical. A future hardening option is an OpenCode plugin that reads
+session usage events and appends rows automatically; deferred until after plan lock.

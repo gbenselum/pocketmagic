@@ -105,3 +105,48 @@ Every card has an allocated **Token Budget** reflecting expected LLM context con
 * **L (~45,000 - 80,000 Tokens):** Full integration, UI stack, or simulation harness.
 
 Agents must operate with precision, keeping edits modular and avoiding context bloat.
+
+---
+
+# 6. Token Accounting Rules (Mandatory)
+
+Every agent tracks its own consumption. The numbers come from the OpenCode
+harness session totals shown at session end. Estimates are forbidden.
+
+## 6.1 Session end — every agent, every session
+
+Append one row to your own ledger:
+
+```bash
+python3 scripts/token_ledger.py log <your-agent-name> <input_tokens> <output_tokens> "<what was done>"
+```
+
+- Description: 40 characters maximum; the script rejects longer text.
+- One row per working session. Never edit or delete existing rows.
+- Read-only agents (`plan`, `troubleshoot`, `guidance-agent`) append rows the
+  same way through the shell; their edit restriction does not cover this bookkeeping.
+
+## 6.2 Merge to main
+
+The merging agent runs, then commits both files in the merge:
+
+```bash
+python3 scripts/token_ledger.py summarize
+```
+
+This regenerates `total_tokensconsumed.md` from all seven ledgers and refreshes
+the "This application was made with N tokens" line at the bottom of `README.md`.
+
+## 6.3 Pull requests
+
+Every PR description includes a Tokens Consumed table (template:
+`.github/pull_request_template.md`). The PR TOTAL must equal the sum of ledger
+rows for sessions included in that PR.
+
+## 6.4 Files
+
+| File | Location | Owner |
+| :--- | :--- | :--- |
+| Per-agent ledger (7 files) | `.agents/agent_<name>_consumed_tokens.md` | That agent only |
+| Unified total | `total_tokensconsumed.md` (repo root) | Merging agent, via script |
+| README footer | `README.md` last line | Script on summarize |
