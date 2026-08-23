@@ -89,3 +89,33 @@ skill, or config constant depends on the PMIC variant (`platform-core` skill alr
 **Awaiting user:** pick (a) v1.1 from reseller or (b) original K010 from the validated link;
 record choice in A-17 so SPECIFICATION Section 2.3 gets its one-line PMIC correction during
 the docs-amendments pass.
+
+---
+
+## 2026-08-23 — Orca ADE Integration (OpenCode harness)
+
+**User goal:** run the seven global agents as separate sessions inside Orca ADE
+(onorca.dev, Stably AI), OpenCode as harness.
+
+**Verified from Orca docs/CLI reference:**
+- OpenCode ships preconfigured in Orca (auto-setup, status). Agent combobox = process launch.
+- Global `~/.config/opencode/agents/*.md` apply in every worktree (user-level config,
+  cwd-independent). Zero per-project config required for persona availability.
+- Per-agent launch-argument overrides exist (Settings -> Agents); a non-empty custom value
+  is treated as explicit user override.
+- Quick Commands (terminal command presets) are project-scoped and mobile-synced but live
+  in app storage, not repository files.
+- Orchestration (`worker-start --agent opencode`) supports tasks/dispatches/gates;
+  per-worker `--model`/`--effort` limited to Claude/Codex/Cursor. No documented flag pins an
+  OpenCode sub-agent per dispatched worker; workaround = role contract in task spec or a
+  global `--agent <persona>` argument override.
+
+**Deliverable:** `docs/ORCA_INTEGRATION.md` — prerequisites, three usage patterns
+(single-pane persona switching / parallel panes via Quick Commands / supervised
+orchestration with limitations stated), verification checklist. No speculative `orca.yaml`
+created: only `scripts.*` and `worktree.sharedDirectories` are confirmed schema keys today;
+project has no setup scripts worth wiring during preplan.
+
+**Manual steps that remain for the user (app-storage, not file-based):** install Orca,
+enable OpenCode in Settings -> Agents, optionally paste the seven Quick Command rows, and
+enable Experimental -> orchestration if Pattern C is wanted.
