@@ -53,8 +53,39 @@ No implementation performed (user directive).
   tip for future card work (amendment A-13 partially executed).
 
 ### Open items / next actions
-1. User reviews `docs/SPEC_AMENDMENTS.md` A-01..A-16 and approves/rejects each.
+1. User reviews `docs/SPEC_AMENDMENTS.md` A-01..A-17 and approves/rejects each.
 2. On approval: apply amendments inside their owning cards (no doc-only pass needed
    except SPECIFICATION.md edits, which should be one dedicated docs commit).
 3. GitHub default branch switch to `main` + branch protection (needs repo admin UI or gh CLI).
 4. After hardware purchase: CARD-PRE-000 hardware sanity step, then INDEX execution order.
+
+---
+
+## 2026-08-23 — Hardware Validation: Board Revision Finding
+
+**Trigger:** user asked to validate https://shop.m5stack.com/products/m5stack-core2-esp32-iot-development-kit
+
+**Finding:** that listing is the ORIGINAL Core2, SKU `K010` — spec table on the page states
+PMU **AXP192**, green LED, no RTC backup battery, 54.9 g. Our docs specified Core2 **v1.1**
+(`K010-V11`: AXP2101 + INA3221, blue LED, RTC backup battery, 45.1 g). The v1.1 listing is
+marked **[EOL]** on the official shop; the K010 remains in stock ($46.90 at validation).
+
+**Engineering impact: none functional.** Both revisions share ESP32-D0WDQ6-V3 / 16 MB flash /
+8 MB PSRAM / ILI9342C+FT6336U display/touch / MPU6886 IMU / BM8563 RTC, and golden rule #1
+routes every hardware call through M5Unified, which auto-detects AXP192 vs AXP2101. No card,
+skill, or config constant depends on the PMIC variant (`platform-core` skill already says
+"PMIC (AXP192/AXP2101)").
+
+**Corrections committed with this entry:**
+1. Battery figure corrected everywhere to vendor-official **500 mAh @ 3.7 V built-in for BOTH
+   revisions** (previous 390 mAh community figure was wrong; SPECIFICATION comparison table
+   row "500 mAh with M5GO Bottom2" is also wrong).
+2. `requiredhardware.md` Section 1a added: full K010 vs K010-V11 decision matrix,
+   recommendation (prefer v1.1 at resellers if fairly priced; otherwise buy in-stock K010),
+   macOS USB-serial driver note (CH9102F/CP210x).
+3. `docs/SPEC_AMENDMENTS.md`: A-14 battery text replaced; new **A-17** records the pending
+   board-revision decision; amendment list now A-01..A-17.
+
+**Awaiting user:** pick (a) v1.1 from reseller or (b) original K010 from the validated link;
+record choice in A-17 so SPECIFICATION Section 2.3 gets its one-line PMIC correction during
+the docs-amendments pass.

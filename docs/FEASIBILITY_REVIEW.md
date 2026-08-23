@@ -28,9 +28,9 @@ well-understood engineering and collectively sound on the selected hardware.
 | R6 | MEDIUM | `pio test -e native \|\| echo ...` swallows test failures in CI | OPEN — A-09 |
 | R7 | MEDIUM | Task_BLE stack 4096 B too small for NimBLE connect/discovery callbacks | OPEN — A-11 (recommend 8192 B) |
 | R8 | LOW | Mounting orientation / axis convention never defined; pitch axis vs neck-tilt mapping depends on clamp direction | OPEN — A-13 (add mounting section before IMU cards execute) |
-| R9 | LOW | Repo hygiene: no LICENSE file, no lv_conf.h, no .clang-format, GitFlow branches do not exist yet (single long-named spec branch), battery figure inconsistent (390 vs 500 mAh), "/S3" error in antigravity chart | OPEN — A-12/A-14/A-15 |
+| R9 | LOW | Repo hygiene: no LICENSE file, no lv_conf.h, no .clang-format, GitFlow branches do not exist yet (single long-named spec branch), battery figure inconsistent (resolved: official spec = 500 mAh both revisions), "/S3" error in antigravity chart | OPEN — A-12/A-14/A-15 |
 | R10 | LOW | No persistence: calibration baseline lost every reboot | OPEN — propose NVS storage in Mode 3 scope |
-| R11 | INFO | Power budget unstated (~3–5 h on 390 mAh at 100 Hz + BLE + LCD) | DOCUMENTED — acceptable for POC |
+| R11 | INFO | Power budget unstated (~4–6 h on the integrated 500 mAh LiPo at 100 Hz + BLE + LCD; vendor spec validated 2026-08-23) | DOCUMENTED — acceptable for POC |
 | R12 | INFO | End-to-end latency expectation unset (~60–150 ms motion-to-audio) | DOCUMENTED — fine for gain swells; not a wah |
 | R13 | INFO | Security section suggests Passkey pairing; MIDI-BLE pedals typically Just Works; forced pairing risks breaking connectivity | OPEN — A-10 (default: no bonding, optional MAC pinning) |
 

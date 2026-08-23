@@ -91,10 +91,23 @@ set origin default branch to `main`. All future feature branches follow
 
 ## A-14 — Documentation consistency fixes [R9]
 1. antigravity_chart.md: remove "/ S3" from Core2 CPU description (Core2 is not ESP32-S3).
-2. SPECIFICATION.md 2.3 battery: state 390 mAh integrated (500 mAh figure applies only
-   with M5GO Bottom2, which A-12/requiredhardware excludes).
+2. SPECIFICATION.md 2.3 and comparison table battery figures: official M5Stack spec
+   (validated 2026-08-23 on both product pages and the Core2 v1.1 docs) states a built-in
+   **500 mAh @ 3.7 V** LiPo for BOTH K010 and K010-V11. The spec's "500 mAh with M5GO
+   Bottom2 / 390 mAh base" row is wrong and must be corrected; third-party sources citing
+   390 mAh are superseded by vendor documentation.
 3. Sync SPECIFICATION.md 11.1 sample workflow with the actual `ci.yml` (they diverge:
    unittest-discover vs pio test) so downstream agents do not implement against stale YAML.
+
+## A-17 — Board revision decision record (2026-08-23) [new]
+The board linked by the user is the ORIGINAL Core2 (`K010`, AXP192, 54.9 g, in stock,
+$46.90), not the Core2 v1.1 (`K010-V11`, AXP2101+INA3221, 45.1 g) named in SPECIFICATION
+Section 2.3. The v1.1 listing is marked **[EOL]** on the official shop. Functional impact:
+none — golden rule #1 (M5Unified-only hardware access) makes firmware revision-agnostic.
+Decision required from user: (a) hunt v1.1 at resellers to match docs, or (b) buy in-stock
+K010 and amend Section 2.3 PMIC text. Full comparison table lives in
+`requiredhardware.md` Section 1a. Whichever is purchased must be recorded here so docs
+stay authoritative.
 
 ## A-15 — Persistence + power notes (post-POC friendly)
 1. Add NVS persistence of calibration baseline + last active mode; write only on user
